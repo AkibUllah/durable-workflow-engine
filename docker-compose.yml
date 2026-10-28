@@ -1,0 +1,38 @@
+# API (no embedded worker) + two worker containers sharing one PostgreSQL.
+# Kill a worker mid-run (`docker compose kill worker`) and watch the other one finish its runs.
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://durable:durable@postgres:5432/durable
+      EMBEDDED_WORKER: "false"
+      # API_KEY: set-me-to-require-X-API-Key
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: ["durable", "worker", "--concurrency", "4"]
+    environment:
+      DATABASE_URL: postgresql://durable:durable@postgres:5432/durable
+      LEASE_SECONDS: "15"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      replicas: 2
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: durable
+      POSTGRES_PASSWORD: durable
+      POSTGRES_DB: durable
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "durable"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
