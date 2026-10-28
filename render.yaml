@@ -1,0 +1,32 @@
+# Render blueprint: API with an embedded worker pool plus a managed PostgreSQL.
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: durable-workflow-engine
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: LOG_LEVEL
+        value: INFO
+      - key: EMBEDDED_WORKER
+        value: "true"
+      - key: WORKER_CONCURRENCY
+        value: "2"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: durable-workflow-db
+          property: connectionString
+      - key: API_KEY
+        generateValue: true
+
+databases:
+  - name: durable-workflow-db
+    plan: free
+    databaseName: durable
+    user: durable
