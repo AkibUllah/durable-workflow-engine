@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "durable-workflow-engine"
+version = "0.1.0"
+description = "Durable execution for Python: async workflows that survive crashes via event-sourced history and deterministic replay, with retries, durable timers, signals and sagas on SQLite or PostgreSQL."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Akib Jafor" }]
+requires-python = ">=3.10"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Framework :: FastAPI",
+  "License :: OSI Approved :: MIT License",
+]
+dependencies = [
+  "sqlalchemy>=2.0",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "pydantic>=2.5",
+  "pydantic-settings>=2.1",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.1"]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=4.1",
+  "httpx>=0.26",
+  "ruff>=0.3",
+  "psycopg[binary]>=3.1",
+]
+
+[project.scripts]
+durable = "durable.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/AkibUllah/durable-workflow-engine"
+
+[tool.setuptools.packages.find]
+include = ["durable*"]
+
+[tool.setuptools.package-data]
+durable = ["static/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "W"]
+ignore = ["B008"]
