@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Durable Workflow Engine</title>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #161c24; --line: #263040; --text: #dce3ea; --muted: #8a97a6;
+    --accent: #5eb0ef; --ok: #4cc38a; --bad: #f2555a; --warn: #f1a10d; --run: #5eb0ef;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; gap: 16px; padding: 14px 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .stats { color: var(--muted); font-size: 13px; }
+  header input { margin-left: auto; background: var(--panel); border: 1px solid var(--line); color: var(--text); padding: 6px 8px; border-radius: 6px; width: 180px; }
+  main { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.3fr); gap: 16px; padding: 16px 20px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+  .starters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  button { background: #1f2a37; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; font: inherit; }
+  button:hover { border-color: var(--accent); }
+  button.danger:hover { border-color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  th { color: var(--muted); font-weight: 500; }
+  tr.run { cursor: pointer; }
+  tr.run:hover, tr.run.selected { background: #1c2530; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid currentColor; }
+  .running { color: var(--run); } .completed { color: var(--ok); } .failed { color: var(--bad); } .cancelled { color: var(--warn); }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  pre { background: #0b0f14; border: 1px solid var(--line); border-radius: 6px; padding: 8px; overflow-x: auto; margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; }
+  ol.timeline { list-style: none; margin: 0; padding: 0; }
+  ol.timeline li { display: grid; grid-template-columns: 34px 1fr; gap: 8px; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+  .seq { color: var(--muted); text-align: right; }
+  .etype { font-weight: 600; }
+  .etype.fail { color: var(--bad); } .etype.done { color: var(--ok); } .etype.wait { color: var(--warn); }
+  .muted { color: var(--muted); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+  .actions input { background: #0b0f14; border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 6px 8px; min-width: 0; flex: 1; }
+  .error { color: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Durable Workflow Engine</h1>
+  <span class="stats" id="stats"></span>
+  <input id="apikey" type="password" placeholder="X-API-Key (if set)" autocomplete="off">
+</header>
+<main>
+  <section>
+    <h2>Start a demo run</h2>
+    <div class="starters" id="starters"></div>
+    <h2>Runs</h2>
+    <table>
+      <thead><tr><th>Workflow</th><th>Status</th><th>Started</th></tr></thead>
+      <tbody id="runs"></tbody>
+    </table>
+    <p class="error" id="error"></p>
+  </section>
+  <section id="detail">
+    <h2>Run</h2>
+    <p class="muted">Pick a run to see its event history. Everything the workflow did is in here, and replaying it is how the run resumes after a crash.</p>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let selected = location.hash.startsWith("#run=") ? decodeURIComponent(location.hash.slice(5)) : null;
+function select(id) { selected = id; history.replaceState(null, "", `#run=${encodeURIComponent(id)}`); refresh(); }
+const keyInput = $("apikey");
+try { keyInput.value = localStorage.getItem("durable-key") || ""; } catch (e) { /* storage blocked */ }
+keyInput.addEventListener("change", () => { try { localStorage.setItem("durable-key", keyInput.value); } catch (e) {} refresh(); });
+
+async function api(path, options = {}) {
+  const headers = { "content-type": "application/json" };
+  if (keyInput.value) headers["X-API-Key"] = keyInput.value;
+  const res = await fetch(path, { ...options, headers });
+  if (!res.ok) throw new Error(`${res.status} ${(await res.json().catch(() => ({}))).detail || res.statusText}`);
+  return res.json();
+}
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v; else if (k.startsWith("on")) node.addEventListener(k.slice(2), v); else node.setAttribute(k, v);
+  }
+  for (const child of children) node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  return node;
+}
+
+const fmtTime = (t) => new Date(t * 1000).toLocaleTimeString();
+const pretty = (v) => JSON.stringify(v, null, 2);
+
+async function loadStarters() {
+  const workflows = await api("/v1/workflows");
+  const box = $("starters");
+  box.replaceChildren(...workflows.map((w) => el("button", {
+    title: w.description,
+    onclick: async () => {
+      const run = await api(`/v1/workflows/${encodeURIComponent(w.name)}/runs`, { method: "POST", body: JSON.stringify({ input: w.sample_input }) });
+      select(run.id);
+    },
+  }, w.name)));
+}
+
+async function refresh() {
+  try {
+    const [runs, stats] = await Promise.all([api("/v1/runs?limit=30"), api("/v1/stats")]);
+    $("error").textContent = "";
+    const counts = Object.entries(stats.runs).map(([k, v]) => `${v} ${k}`).join(" · ") || "no runs yet";
+    const pending = Object.values(stats.tasks).reduce((a, b) => a + b, 0);
+    $("stats").textContent = `${counts} · ${pending} queued task(s)`;
+    $("runs").replaceChildren(...runs.map((r) => el("tr", { class: `run ${r.id === selected ? "selected" : ""}`, onclick: () => select(r.id) },
+      el("td", {}, r.workflow, el("div", { class: "muted" }, el("code", {}, r.id.slice(0, 12)))),
+      el("td", {}, el("span", { class: `pill ${r.status}` }, r.status)),
+      el("td", { class: "muted" }, fmtTime(r.created_at)))));
+    if (selected) await showRun(selected);
+  } catch (err) {
+    $("error").textContent = err.message;
+  }
+}
+
+function eventClass(type) {
+  if (type.endsWith("failed") || type === "workflow_cancelled") return "etype fail";
+  if (type.endsWith("completed") || type === "timer_fired" || type === "signal_received") return "etype done";
+  if (type.endsWith("started") || type === "activity_scheduled") return "etype wait";
+  return "etype";
+}
+
+function summary(e) {
+  const d = e.data;
+  switch (e.type) {
+    case "activity_scheduled": return `${d.name}(${d.args.map((a) => JSON.stringify(a)).join(", ")})`;
+    case "activity_completed": return `attempt ${d.attempt} → ${JSON.stringify(d.result)}`;
+    case "activity_attempt_failed": return `attempt ${d.attempt}: ${d.error_type}: ${d.error} (retry in ${d.retry_in}s)`;
+    case "activity_failed": return `${d.error_type}: ${d.error} after ${d.attempts} attempt(s)`;
+    case "timer_started": return `sleep ${d.seconds}s (fires ${fmtTime(d.fire_at)})`;
+    case "signal_wait_started": return `wait for "${d.name}"${d.timeout ? ` up to ${d.timeout}s` : ""}`;
+    case "signal_received": return `"${d.name}" ${JSON.stringify(d.payload)}`;
+    case "side_effect": return `${d.name} = ${JSON.stringify(d.value)}`;
+    case "workflow_started": return JSON.stringify(d.input);
+    case "workflow_completed": return JSON.stringify(d.result);
+    case "workflow_failed": return `${d.error_type}: ${d.error}`;
+    default: return Object.keys(d).length ? JSON.stringify(d) : "";
+  }
+}
+
+async function showRun(id) {
+  const [run, history] = await Promise.all([api(`/v1/runs/${id}`), api(`/v1/runs/${id}/history`)]);
+  const detail = $("detail");
+  const nodes = [
+    el("h2", {}, `Run · ${run.workflow}`),
+    el("div", {}, el("span", { class: `pill ${run.status}` }, run.status), " ", el("code", { class: "muted" }, run.id)),
+  ];
+  if (run.status === "running") {
+    const name = el("input", { placeholder: "signal name", value: run.workflow === "document_approval" ? "decision" : "" });
+    const payload = el("input", { placeholder: "JSON payload", value: run.workflow === "document_approval" ? '{"approved": true, "note": "looks good"}' : "null" });
+    nodes.push(el("div", { class: "actions" }, name, payload,
+      el("button", { onclick: async () => {
+        try { await api(`/v1/runs/${id}/signals/${encodeURIComponent(name.value)}`, { method: "POST", body: JSON.stringify({ payload: JSON.parse(payload.value || "null") }) }); refresh(); }
+        catch (err) { $("error").textContent = err.message; }
+      } }, "Send signal"),
+      el("button", { class: "danger", onclick: async () => { await api(`/v1/runs/${id}/cancel`, { method: "POST" }); refresh(); } }, "Cancel")));
+  }
+  if (run.result !== null) nodes.push(el("pre", {}, pretty(run.result)));
+  if (run.error) nodes.push(el("pre", { class: "error" }, `${run.error_type}: ${run.error}`));
+  nodes.push(el("h2", { style: "margin-top:14px" }, `History (${history.length} events)`));
+  nodes.push(el("ol", { class: "timeline" }, ...history.map((e) => el("li", {},
+    el("span", { class: "seq" }, e.seq),
+    el("div", {},
+      el("span", { class: eventClass(e.type) }, e.type), e.cmd !== null ? el("span", { class: "muted" }, `  #${e.cmd}`) : "",
+      el("div", { class: "muted" }, el("code", {}, summary(e))))))));
+  detail.replaceChildren(...nodes);
+}
+
+loadStarters().catch((err) => { $("error").textContent = err.message; });
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
